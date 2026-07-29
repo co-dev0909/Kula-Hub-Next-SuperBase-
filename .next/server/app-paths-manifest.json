@@ -1,0 +1,10 @@
+{
+  "/api/applications/process/route": "app/api/applications/process/route.js",
+  "/api/applications/route": "app/api/applications/route.js",
+  "/api/profile/route": "app/api/profile/route.js",
+  "/api/auth/me/route": "app/api/auth/me/route.js",
+  "/api/jobs/route": "app/api/jobs/route.js",
+  "/user/jobs/page": "app/user/jobs/page.js",
+  "/user/applications/page": "app/user/applications/page.js",
+  "/user/profiles/page": "app/user/profiles/page.js"
+}
