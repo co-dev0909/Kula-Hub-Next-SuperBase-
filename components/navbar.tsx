@@ -84,6 +84,7 @@ type MonitorSnapshot = {
 type ApplicationRecord = {
   _id: string;
   status?: string;
+  is_closed?: boolean;
   created_at?: string;
   date_applied?: string | null;
 };
@@ -508,14 +509,17 @@ export default function Navbar() {
   );
 
   const appliedCount = useMemo(
-    () => applications.filter((application) => application.status === "Applied").length,
+    () => applications.filter((application) =>
+      !application.is_closed && application.status === "Applied"
+    ).length,
     [applications]
   );
 
   const generatedCount = useMemo(
     () =>
       applications.filter((application) =>
-        ["Generated", "Downloaded"].includes(application.status || "")
+        !application.is_closed
+        && ["Generated", "Downloaded"].includes(application.status || "")
       ).length,
     [applications]
   );

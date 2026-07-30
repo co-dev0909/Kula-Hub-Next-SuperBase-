@@ -1,4 +1,4 @@
-// File: D:\Project\resume-builder-2.1\bd-frontend\app\api\applications\route.ts
+// File: D:\Project\resume-builder-2.1\Kula-Hub\app\api\applications\route.ts
 import * as entry from '../../../../../app/api/applications/route.js'
 import type { NextRequest } from 'next/server.js'
 

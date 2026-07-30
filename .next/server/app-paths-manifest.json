@@ -3,8 +3,8 @@
   "/api/applications/route": "app/api/applications/route.js",
   "/api/profile/route": "app/api/profile/route.js",
   "/api/auth/me/route": "app/api/auth/me/route.js",
-  "/api/jobs/route": "app/api/jobs/route.js",
+  "/api/applications/[id]/expired/route": "app/api/applications/[id]/expired/route.js",
+  "/page": "app/page.js",
   "/user/jobs/page": "app/user/jobs/page.js",
-  "/user/applications/page": "app/user/applications/page.js",
-  "/user/profiles/page": "app/user/profiles/page.js"
+  "/user/applications/page": "app/user/applications/page.js"
 }

@@ -75,6 +75,10 @@ function processingIsStale(row: { status?: string; updatedAt?: string | null }) 
   return row.status === "Generating" && updateIsStale(row.updatedAt);
 }
 
+function getApplicationDisplayStatus(row: { status?: string; is_closed?: boolean }) {
+  return row.is_closed ? "Expired" : row.status || "";
+}
+
 export default function Applications() {
   const panelClassName =
     "border border-white/8 bg-[#121821]/88 shadow-[0_24px_80px_rgba(0,0,0,0.24)] backdrop-blur-md";
@@ -95,6 +99,7 @@ export default function Applications() {
     id: string;
     url: string;
   } | null>(null);
+  const [confirmingDecision, setConfirmingDecision] = useState<"apply" | "expired" | null>(null);
   const [restoreAppId, setRestoreAppId] = useState<string | undefined>();
   const [confirmDelOpen, setConfirmDelOpen] = useState(false);
   const [pendingDelApp, setPendingDelApp] = useState<string>('')
@@ -112,7 +117,9 @@ export default function Applications() {
     const matchCompany = filterCompany
       ? app.company?.toLowerCase().includes(filterCompany.toLowerCase())
       : true;
-    const matchStatus = filterStatus ? app.status === filterStatus : true;
+    const matchStatus = filterStatus
+      ? getApplicationDisplayStatus(app) === filterStatus
+      : true;
     const matchDate = filterDate
       ? getApplicationFilterDateKey(app.date_applied) === filterDate
       : true;
@@ -146,9 +153,10 @@ export default function Applications() {
       header: "Status",
       accessorKey: "status",
       cell: (row: any) => {
+        const displayStatus = getApplicationDisplayStatus(row);
         let color = "bg-gray-500"; // fallback color
 
-        switch (row.status) {
+        switch (displayStatus) {
           case "Pending":
             color = "bg-yellow-500"; // yellow for pending
             break;
@@ -164,6 +172,9 @@ export default function Applications() {
           case "Applied":
             color = "bg-green-500"; // green for applied
             break;
+          case "Expired":
+            color = "bg-rose-700";
+            break;
           case "Failed":
             color = "bg-red-600";
             break;
@@ -173,7 +184,7 @@ export default function Applications() {
 
         return (
           <div className="text-center">
-            <Badge className={`${color} text-white`}>{row.status}</Badge>
+            <Badge className={`${color} text-white`}>{displayStatus}</Badge>
           </div>
         );
       },
@@ -214,11 +225,12 @@ export default function Applications() {
         return (
           <div
             className={`${
-              row.status === "Generated" ? "justify-center" : "justify-end"
+              getApplicationDisplayStatus(row) === "Generated" ? "justify-center" : "justify-end"
             } flex items-center h-full gap-2`}
           >
             {(() => {
               if (row.driveUploadInProgress) return null;
+              if (row.is_closed) return null;
               switch (row.status) {
                 case "Pending":
                   return null;
@@ -663,7 +675,8 @@ export default function Applications() {
 
 
   const confirmApply = async () => {
-    if (!pendingApp) return;
+    if (!pendingApp || confirmingDecision) return;
+    setConfirmingDecision("apply");
     try {
       const token = localStorage.getItem("token");
       const res = await fetch(
@@ -676,18 +689,60 @@ export default function Applications() {
           },
         }
       );
+      const data = await res.json().catch(() => null);
 
       if (res.ok) {
-        getApplications(); // refresh
+        if (data?.data) {
+          setApplications((current) => current.map((application) =>
+            application._id === pendingApp.id ? data.data : application
+          ));
+        }
+        await getApplications(false);
+        setConfirmOpen(false);
+        setPendingApp(null);
       } else {
-        const data = await res.json();
-        toast.error(data.message || "Failed to set applied status.");
+        toast.error(data?.message || "Failed to set applied status.");
       }
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Set applied failed.");
     } finally {
-      setConfirmOpen(false);
-      setPendingApp(null);
+      setConfirmingDecision(null);
+    }
+  };
+
+  const confirmLinkExpired = async () => {
+    if (!pendingApp || confirmingDecision) return;
+    setConfirmingDecision("expired");
+    try {
+      const token = localStorage.getItem("token");
+      const res = await fetch(
+        `${process.env.NEXT_PUBLIC_BACKEND_URL || "/api"}/applications/${pendingApp.id}/expired`,
+        {
+          method: "PATCH",
+          headers: {
+            "Content-Type": "application/json",
+            ...(token && { Authorization: `Bearer ${token}` }),
+          },
+        }
+      );
+      const data = await res.json().catch(() => null);
+
+      if (res.ok) {
+        if (data?.data) {
+          setApplications((current) => current.map((application) =>
+            application._id === pendingApp.id ? data.data : application
+          ));
+        }
+        await getApplications(false);
+        setConfirmOpen(false);
+        setPendingApp(null);
+      } else {
+        toast.error(data?.message || "Failed to mark the link as expired.");
+      }
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Set expired status failed.");
+    } finally {
+      setConfirmingDecision(null);
     }
   };
 
@@ -792,6 +847,7 @@ export default function Applications() {
                         <SelectItem value="Generated">Generated</SelectItem>
                         <SelectItem value="Downloaded">Downloaded</SelectItem>
                         <SelectItem value="Applied">Applied</SelectItem>
+                        <SelectItem value="Expired">Expired</SelectItem>
                         <SelectItem value="Failed">Failed</SelectItem>
                       </SelectContent>
                     </Select>
@@ -823,27 +879,46 @@ export default function Applications() {
             </Card>
           </div>
         </div>
-        <Dialog open={confirmOpen} onOpenChange={setConfirmOpen}>
-          <DialogContent className={modalClassName}>
+        <Dialog
+          open={confirmOpen}
+          onOpenChange={(open) => {
+            if (confirmingDecision) return;
+            setConfirmOpen(open);
+            if (!open) setPendingApp(null);
+          }}
+        >
+          <DialogContent className={modalClassName} showCloseButton={!confirmingDecision}>
             <DialogHeader>
               <DialogTitle className="text-slate-100">Confirm Apply</DialogTitle>
             </DialogHeader>
             <p className="text-sm leading-6 text-slate-400">
               Are you sure you want to mark this application as <b>Applied</b>?
             </p>
-            <DialogFooter className="mt-4 flex justify-end gap-3">
+            <DialogFooter className="mt-4 flex flex-col justify-end gap-3 sm:flex-row">
               <Button
                 autoFocus
                 variant="outline"
                 className={modalPrimaryButtonClassName}
+                disabled={Boolean(confirmingDecision)}
                 onClick={confirmApply}
               >
                 Yes, Apply
               </Button>
               <Button
+                variant="destructive"
+                disabled={Boolean(confirmingDecision)}
+                onClick={confirmLinkExpired}
+              >
+                Link Expired
+              </Button>
+              <Button
                 variant="secondary"
                 className={modalSecondaryButtonClassName}
-                onClick={() => setConfirmOpen(false)}
+                disabled={Boolean(confirmingDecision)}
+                onClick={() => {
+                  setConfirmOpen(false);
+                  setPendingApp(null);
+                }}
               >
                 Cancel
               </Button>

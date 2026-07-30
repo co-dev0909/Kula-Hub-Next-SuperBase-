@@ -1,8 +1,8 @@
-// File: D:\Project\resume-builder-2.1\bd-frontend\app\api\jobs\route.ts
-import * as entry from '../../../../../app/api/jobs/route.js'
+// File: D:\Project\resume-builder-2.1\Kula-Hub\app\api\applications\[id]\expired\route.ts
+import * as entry from '../../../../../../../app/api/applications/[id]/expired/route.js'
 import type { NextRequest } from 'next/server.js'
 
-type TEntry = typeof import('../../../../../app/api/jobs/route.js')
+type TEntry = typeof import('../../../../../../../app/api/applications/[id]/expired/route.js')
 
 type SegmentParams<T extends Object = any> = T extends Record<string, any>
   ? { [K in keyof T]: T[K] extends string ? string | string[] | undefined : never }

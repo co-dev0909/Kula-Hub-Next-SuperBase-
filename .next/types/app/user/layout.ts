@@ -1,4 +1,4 @@
-// File: D:\Project\resume-builder-2.1\bd-frontend\app\user\layout.tsx
+// File: D:\Project\resume-builder-2.1\Kula-Hub\app\user\layout.tsx
 import * as entry from '../../../../app/user/layout.js'
 import type { ResolvingMetadata, ResolvingViewport } from 'next/dist/lib/metadata/types/metadata-interface.js'
 

@@ -100,7 +100,7 @@ Open `http://localhost:3000`.
 
 ## Deploy to Vercel
 
-When importing the repository, set the Vercel **Root Directory** to `bd-frontend`. Vercel will detect Next.js and use `npm run build`; keep `package-lock.json` committed so production installs use the tested dependency graph.
+When importing the Kula-Hub Git repository directly, leave Vercel's **Root Directory** at the repository root (`.`). If you import the parent workspace as a monorepo instead, set it to `Kula-Hub`. Vercel will detect Next.js and use `npm run build`; keep `package-lock.json` committed so production installs use the tested dependency graph.
 
 Add these variables under **Project Settings → Environment Variables** for Production and any Preview environment you intend to test:
 
