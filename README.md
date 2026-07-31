@@ -10,7 +10,7 @@ The application is a single Next.js deployment backed by hosted Supabase.
 - Supabase-backed FIFO application queue with an atomic per-user worker lock
 - Vercel Queues: durable production wake-ups for background resume processing
 - DeepSeek: ATS resume content generation
-- Docxtemplater and PDF-Lib: in-memory DOCX/PDF generation
+- Docxtemplater: in-memory DOCX generation
 - Optional Google Drive API: editable native Google Docs copies
 
 No Railway server, MongoDB database, Docker installation, persistent worker, LibreOffice installation, or local generated-file directory is required.
@@ -57,7 +57,7 @@ The publishable key is safe for the browser. Never place a service-role key or d
 
 ## Optional Google Docs upload
 
-Google Drive is an additional copy; the private Supabase DOCX/PDF files remain the authoritative downloads. Apply `supabase/migrations/202607290002_google_drive.sql`, then configure fresh server-only credentials:
+Google Drive is an additional copy; the private Supabase DOCX file remains the authoritative download. Apply `supabase/migrations/202607290002_google_drive.sql`, then configure fresh server-only credentials:
 
 ```env
 UPLOAD_RESUMES_TO_DRIVE=true
@@ -136,7 +136,7 @@ In Supabase **Authentication → URL Configuration**, set the Site URL to the pr
 2. Create a profile with education, experience, and a resume template.
 3. Save three jobs quickly. Each Save should return immediately, clear the form, and keep you on `/user/jobs`.
 4. Open `/user/applications` and confirm the oldest application is **Generating** while the newer applications remain **Pending**.
-5. Confirm each application automatically advances from **Pending** to **Generating**, one at a time, then becomes **Generated** with DOCX/PDF objects in the private `resumes` bucket.
+5. Confirm each application automatically advances from **Pending** to **Generating**, one at a time, then becomes **Generated** with a DOCX object in the private `resumes` bucket.
 6. If Drive upload is enabled, confirm each application stays **Generating** until **Open Google Doc** opens an editable native Google Doc.
 7. Download a resume and mark the application Applied.
 8. Confirm users cannot access another user's records or files.
@@ -154,7 +154,7 @@ npm.cmd audit
 
 ## Data model
 
-The schema source of truth is the ordered set of files in `supabase/migrations`. In particular, `202607290003_application_queue.sql` adds the atomic FIFO claim function required by automatic processing. The migrations create:
+The schema source of truth is the ordered set of files in `supabase/migrations`. In particular, `202607290003_application_queue.sql` adds the atomic FIFO claim function required by automatic processing, and `202607310001_docx_only_resumes.sql` makes DOCX the sole generated resume artifact. The migrations create:
 
 - `user_profiles`, linked one-to-one with `auth.users`
 - `profiles`, including JSONB education and experience collections
@@ -165,10 +165,10 @@ The schema source of truth is the ordered set of files in `supabase/migrations`.
 - Private `resumes` Storage bucket
 - Ownership indexes, update triggers, and complete RLS policies
 
-Generated files use `<auth-user-id>/<application-id>/resume.{docx,pdf}` and are returned only through authenticated download handlers.
+Generated files use `<auth-user-id>/<application-id>/resume.docx` and are returned only through authenticated download handlers.
 
 ## Troubleshooting
 
 If the application reports a missing table or column in the schema cache, Auth is connected but the hosted schema is not current. Run `npm.cmd run supabase:link` followed by `npm.cmd run supabase:push`, or execute every migration file in filename order in the Supabase SQL Editor. Do not create only the reported table or column manually; the application also requires the related types, triggers, indexes, RLS policies, Storage bucket, and integration metadata.
 
-If applications stay Pending and `/api/applications/process` reports that the queue is not ready, apply `supabase/migrations/202607290003_application_queue.sql`. For durable Vercel processing after the browser closes, also configure the server-only `SUPABASE_SECRET_KEY` and redeploy.
+If applications stay Pending and `/api/applications/process` reports that the queue is not ready, apply every migration through `supabase/migrations/202607310001_docx_only_resumes.sql`. For durable Vercel processing after the browser closes, also configure the server-only `SUPABASE_SECRET_KEY` and redeploy.

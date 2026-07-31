@@ -46,7 +46,6 @@ export function mapApplication(row: JsonRecord) {
     industry_domain: row.industry_domain,
     job_url: row.job_url,
     description: row.description,
-    resumePDFPath: row.resume_pdf_path ? `/applications/${row.id}/download?format=pdf` : null,
     resumeWordPath: row.resume_word_path ? `/applications/${row.id}/download` : null,
     cvPath: row.cv_path,
     driveDocxLink: row.drive_docx_link || null,

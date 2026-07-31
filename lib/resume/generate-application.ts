@@ -1,7 +1,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { googleDriveUploadsEnabled, uploadDocxAsGoogleDoc } from "@/lib/google/drive";
 import { generateResumeJson } from "@/lib/resume/ai";
-import { createDocx, createPdf } from "@/lib/resume/documents";
+import { createDocx } from "@/lib/resume/documents";
 import { resumeBaseName } from "@/lib/resume/filename";
 import { DRIVE_UPLOAD_IN_PROGRESS } from "@/lib/resume/generation-state";
 import type { ResumeProfile } from "@/lib/resume/types";
@@ -27,7 +27,6 @@ type ApplicationRecord = {
   description: string;
   updated_at: string;
   resume_word_path: string | null;
-  resume_pdf_path: string | null;
   drive_file_id: string | null;
   drive_docx_link: string | null;
   drive_docx_download_link: string | null;
@@ -46,7 +45,6 @@ type GenerationData = {
   _id: string;
   status: ApplicationStatus;
   resumeWordPath?: string;
-  resumePDFPath?: string;
   driveDocxLink?: string | null;
   driveDocxDownloadLink?: string | null;
 };
@@ -103,15 +101,14 @@ function statusNeedsRecovery(status: ApplicationStatus) {
 function responseData(
   applicationId: string,
   status: ApplicationStatus,
-  hasGeneratedFiles: boolean,
+  hasGeneratedResume: boolean,
   driveUpload?: GoogleDriveUpload | null,
 ): GenerationData {
   return {
     _id: applicationId,
     status,
-    ...(hasGeneratedFiles ? {
+    ...(hasGeneratedResume ? {
       resumeWordPath: `/applications/${applicationId}/download`,
-      resumePDFPath: `/applications/${applicationId}/download?format=pdf`,
     } : {}),
     ...(driveUpload !== undefined ? {
       driveDocxLink: driveUpload?.viewLink || null,
@@ -207,9 +204,7 @@ export async function generateApplicationResume({
 
   let stage = "preparing the application";
   let driveWorkStarted = false;
-  let generatedPaths = application.resume_word_path && application.resume_pdf_path
-    ? { docxPath: application.resume_word_path, pdfPath: application.resume_pdf_path }
-    : null;
+  let generatedDocxPath = application.resume_word_path || null;
 
   try {
     stage = "reading the profile";
@@ -220,9 +215,9 @@ export async function generateApplicationResume({
     const profile = profileFrom(profileRecord);
 
     const driveEnabled = googleDriveUploadsEnabled();
-    const hasGeneratedFiles = Boolean(generatedPaths);
+    const hasGeneratedResume = Boolean(generatedDocxPath);
     let driveUpload = currentDriveUpload(application);
-    const needsGeneration = !hasGeneratedFiles;
+    const needsGeneration = !hasGeneratedResume;
     const needsDriveUpload = driveEnabled && !driveUpload;
     const driveUploadIsRunning = application.drive_upload_error === DRIVE_UPLOAD_IN_PROGRESS;
 
@@ -319,13 +314,13 @@ export async function generateApplicationResume({
       }
     }
 
-    if (hasGeneratedFiles && generatedPaths) {
+    if (hasGeneratedResume && generatedDocxPath) {
       if (driveEnabled && !driveUpload) {
         driveWorkStarted = true;
         stage = "reading the generated DOCX from Supabase Storage";
         const { data: storedDocx, error: storedDocxError } = await supabase.storage
           .from("resumes")
-          .download(generatedPaths.docxPath);
+          .download(generatedDocxPath);
         if (storedDocxError || !storedDocx) {
           throw new Error(storedDocxError?.message || "The generated DOCX could not be read.");
         }
@@ -364,30 +359,20 @@ export async function generateApplicationResume({
     stage = "generating resume content with DeepSeek";
     const resume = await generateResumeJson(profile, application.description);
 
-    stage = "rendering DOCX and PDF files";
-    const [docx, pdf] = await Promise.all([
-      createDocx(resume, profile.template),
-      createPdf(resume),
-    ]);
+    stage = "rendering the DOCX file";
+    const docx = await createDocx(resume, profile.template);
     const basePath = `${userId}/${applicationId}`;
     const docxPath = `${basePath}/resume.docx`;
-    const pdfPath = `${basePath}/resume.pdf`;
 
-    stage = "uploading files to Supabase Storage";
-    const [{ error: docxError }, { error: pdfError }] = await Promise.all([
-      supabase.storage.from("resumes").upload(docxPath, docx, {
-        contentType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-        upsert: true,
-      }),
-      supabase.storage.from("resumes").upload(pdfPath, pdf, {
-        contentType: "application/pdf",
-        upsert: true,
-      }),
-    ]);
-    if (docxError || pdfError) {
-      throw new Error(docxError?.message || pdfError?.message || "Storage upload failed.");
+    stage = "uploading the DOCX file to Supabase Storage";
+    const { error: docxError } = await supabase.storage.from("resumes").upload(docxPath, docx, {
+      contentType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+      upsert: true,
+    });
+    if (docxError) {
+      throw new Error(docxError.message || "Storage upload failed.");
     }
-    generatedPaths = { docxPath, pdfPath };
+    generatedDocxPath = docxPath;
 
     stage = "saving generated file paths";
     await updateApplication(
@@ -397,7 +382,6 @@ export async function generateApplicationResume({
       {
         status: "Generating",
         resume_word_path: docxPath,
-        resume_pdf_path: pdfPath,
         generation_error: null,
         drive_upload_error: driveEnabled ? DRIVE_UPLOAD_IN_PROGRESS : null,
       },
@@ -413,7 +397,6 @@ export async function generateApplicationResume({
     const changes: Record<string, unknown> = {
       status: "Generated",
       resume_word_path: docxPath,
-      resume_pdf_path: pdfPath,
       generation_error: null,
       queue_previous_status: null,
     };
@@ -452,9 +435,8 @@ export async function generateApplicationResume({
     if (driveFailure && statusNeedsRecovery(application.status)) {
       failureChanges.status = finishedStatus(application.status, application.queue_previous_status);
     }
-    if (generatedPaths) {
-      failureChanges.resume_word_path = generatedPaths.docxPath;
-      failureChanges.resume_pdf_path = generatedPaths.pdfPath;
+    if (generatedDocxPath) {
+      failureChanges.resume_word_path = generatedDocxPath;
     }
     let recordedDiagnostic = diagnostic;
     try {
@@ -490,7 +472,7 @@ export async function generateApplicationResume({
         driveFailure
           ? finishedStatus(application.status, application.queue_previous_status)
           : "Failed",
-        Boolean(generatedPaths),
+        Boolean(generatedDocxPath),
       ),
     };
   }

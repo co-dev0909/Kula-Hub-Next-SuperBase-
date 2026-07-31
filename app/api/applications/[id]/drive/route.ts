@@ -13,7 +13,7 @@ export async function POST(_request: Request, context: Context) {
     .from("applications")
     .select(`
       id,status,updated_at,queue_previous_status,
-      resume_word_path,resume_pdf_path,
+      resume_word_path,
       drive_file_id,drive_docx_link,drive_docx_download_link
     `)
     .eq("id", id)
@@ -34,7 +34,7 @@ export async function POST(_request: Request, context: Context) {
       },
     });
   }
-  if (!application.resume_word_path || !application.resume_pdf_path) {
+  if (!application.resume_word_path) {
     return failure("Generate the resume before uploading it to Google Drive.", 409);
   }
 

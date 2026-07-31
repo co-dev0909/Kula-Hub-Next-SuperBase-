@@ -9,6 +9,6 @@ export function resumeBaseName(fullName: string | null | undefined) {
     .replace(/[^a-z0-9_-]/gi, "") || "Resume";
 }
 
-export function resumeFilename(fullName: string | null | undefined, extension: "docx" | "pdf") {
-  return `${resumeBaseName(fullName)}.${extension}`;
+export function resumeFilename(fullName: string | null | undefined) {
+  return `${resumeBaseName(fullName)}.docx`;
 }

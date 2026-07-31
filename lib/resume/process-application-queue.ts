@@ -41,20 +41,18 @@ async function markClaimedApplicationFailed(
 ) {
   const { data: application, error: loadError } = await supabase
     .from("applications")
-    .select("status,resume_word_path,resume_pdf_path,queue_previous_status")
+    .select("status,resume_word_path,queue_previous_status")
     .eq("id", applicationId)
     .eq("user_id", userId)
     .maybeSingle();
   if (loadError) throw loadError;
   if (!application) return;
 
-  const hasGeneratedFiles = Boolean(
-    application.resume_word_path && application.resume_pdf_path,
-  );
+  const hasGeneratedResume = Boolean(application.resume_word_path);
   const previousStatus = ["Downloaded", "Applied"].includes(application.queue_previous_status)
     ? application.queue_previous_status
     : "Generated";
-  const changes = hasGeneratedFiles
+  const changes = hasGeneratedResume
     ? {
         status: previousStatus,
         generation_error: null,
