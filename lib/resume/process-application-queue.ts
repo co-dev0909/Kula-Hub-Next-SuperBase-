@@ -1,4 +1,5 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { messageFromUnknown } from "@/lib/errors";
 import {
   generateApplicationResume,
   type ApplicationResumeGenerationResult,
@@ -131,7 +132,7 @@ export async function processNextApplication(
         };
       }
     } catch (error) {
-      const detail = error instanceof Error ? error.message : "Unexpected queue processing failure.";
+      const detail = messageFromUnknown(error, "Unexpected queue processing failure.");
       const diagnostic = `processing the queued application: ${detail}`;
       await markClaimedApplicationFailed(supabase, userId, applicationId, diagnostic);
       result = {

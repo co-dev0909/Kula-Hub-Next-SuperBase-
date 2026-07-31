@@ -185,6 +185,16 @@ export default function Applications() {
         return (
           <div className="text-center">
             <Badge className={`${color} text-white`}>{displayStatus}</Badge>
+            {displayStatus === "Failed" && row.generationError && (
+              <details className="mx-auto mt-1 max-w-72 text-left text-xs text-red-300">
+                <summary className="cursor-pointer select-none text-center underline underline-offset-2">
+                  View error
+                </summary>
+                <p className="mt-1 whitespace-normal break-words rounded bg-red-950/40 p-2">
+                  {row.generationError}
+                </p>
+              </details>
+            )}
           </div>
         );
       },

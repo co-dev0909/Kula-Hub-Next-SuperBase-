@@ -1,4 +1,5 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { messageFromUnknown } from "@/lib/errors";
 import { googleDriveUploadsEnabled, uploadDocxAsGoogleDoc } from "@/lib/google/drive";
 import { generateResumeJson } from "@/lib/resume/ai";
 import { createDocx } from "@/lib/resume/documents";
@@ -418,7 +419,7 @@ export async function generateApplicationResume({
       data: responseData(applicationId, "Generated", true, driveUpload),
     };
   } catch (error) {
-    const message = error instanceof Error ? error.message : "Resume generation failed.";
+    const message = messageFromUnknown(error, "Resume generation failed.");
     const diagnostic = `${stage}: ${message}`;
     const driveFailure = driveWorkStarted;
     const failureChanges: Record<string, unknown> = driveFailure
@@ -453,9 +454,7 @@ export async function generateApplicationResume({
         recordedDiagnostic += " Failure status could not be saved because the application no longer exists.";
       }
     } catch (failureUpdateError) {
-      const detail = failureUpdateError instanceof Error
-        ? failureUpdateError.message
-        : "Unknown database error.";
+      const detail = messageFromUnknown(failureUpdateError, "Unknown database error.");
       recordedDiagnostic += ` Failure status could not be saved: ${detail}`;
     }
 

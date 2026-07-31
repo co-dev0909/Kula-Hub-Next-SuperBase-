@@ -44,7 +44,20 @@ export default function ApplicationQueueRunner() {
               break;
             }
 
-            lastError = "";
+            const result = payload.data?.state === "processed" ? payload.data?.result : null;
+            if (result?.success === false) {
+              const message = result.error
+                || result.message
+                || payload.message
+                || "Resume generation failed.";
+              if (message !== lastError) {
+                lastError = message;
+                toast.error(message);
+              }
+            } else {
+              lastError = "";
+            }
+
             if (payload.data?.state !== "processed" || !payload.data?.hasPending) break;
           }
         } while (mounted && rerunRequested);

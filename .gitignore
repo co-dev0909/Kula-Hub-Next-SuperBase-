@@ -1,1 +1,6 @@
 node_modules
+
+# Local environment files can contain API keys and OAuth credentials.
+.env
+.env.*
+!.env.example

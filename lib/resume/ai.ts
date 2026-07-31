@@ -1,4 +1,5 @@
 import OpenAI from "openai";
+import { messageFromUnknown } from "@/lib/errors";
 import { buildResumePrompt } from "./prompt";
 import type { GeneratedResume, ResumeProfile } from "./types";
 
@@ -13,11 +14,38 @@ function parseJson(content: string | null): GeneratedResume {
   const raw = (fenced?.[1] || content).trim();
   const start = raw.indexOf("{");
   const end = raw.lastIndexOf("}");
-  const parsed = JSON.parse(start >= 0 && end > start ? raw.slice(start, end + 1) : raw);
+  let parsed: GeneratedResume;
+  try {
+    parsed = JSON.parse(start >= 0 && end > start ? raw.slice(start, end + 1) : raw);
+  } catch {
+    throw new Error("The resume model returned invalid or truncated JSON.");
+  }
   if (!parsed?.contact || !Array.isArray(parsed.skills) || !Array.isArray(parsed.experiences)) {
     throw new Error("The resume model returned an invalid document structure.");
   }
-  return parsed as GeneratedResume;
+  return parsed;
+}
+
+function deepSeekStatus(error: unknown) {
+  if (!error || typeof error !== "object" || !("status" in error)) return null;
+  const status = (error as { status?: unknown }).status;
+  return typeof status === "number" ? status : null;
+}
+
+function deepSeekErrorMessage(error: unknown) {
+  switch (deepSeekStatus(error)) {
+    case 401:
+      return "DeepSeek authentication failed (401). Replace DEEPSEEK_API_KEY in the server environment and redeploy.";
+    case 402:
+      return "The DeepSeek API account has insufficient balance (402). Add API credit before retrying.";
+    case 429:
+      return "DeepSeek rate-limited the request (429). Wait briefly before retrying.";
+    case 500:
+    case 503:
+      return "DeepSeek is temporarily unavailable. Retry after a short delay.";
+    default:
+      return messageFromUnknown(error, "DeepSeek could not generate resume content.");
+  }
 }
 
 export async function generateResumeJson(profile: ResumeProfile, jobDescription: string) {
@@ -42,6 +70,10 @@ export async function generateResumeJson(profile: ResumeProfile, jobDescription:
   } as OpenAI.Chat.Completions.ChatCompletionCreateParamsNonStreaming & {
     thinking: { type: "disabled" };
   };
-  const response = await client.chat.completions.create(request);
-  return parseJson(response.choices[0]?.message?.content || null);
+  try {
+    const response = await client.chat.completions.create(request);
+    return parseJson(response.choices[0]?.message?.content || null);
+  } catch (error) {
+    throw new Error(deepSeekErrorMessage(error), { cause: error });
+  }
 }
