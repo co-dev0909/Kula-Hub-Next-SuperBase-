@@ -154,7 +154,7 @@ npm.cmd audit
 
 ## Data model
 
-The schema source of truth is the ordered set of files in `supabase/migrations`. In particular, `202607290003_application_queue.sql` adds the atomic FIFO claim function required by automatic processing, and `202607310001_docx_only_resumes.sql` makes DOCX the sole generated resume artifact. The migrations create:
+The schema source of truth is the ordered set of files in `supabase/migrations`. In particular, `202607290003_application_queue.sql` adds the atomic FIFO claim function required by automatic processing, `202607310001_docx_only_resumes.sql` makes DOCX the sole generated resume artifact, and `202608070001_applications_list_index.sql` keeps the per-user application list query fast as data grows. The migrations create:
 
 - `user_profiles`, linked one-to-one with `auth.users`
 - `profiles`, including JSONB education and experience collections
@@ -163,7 +163,7 @@ The schema source of truth is the ordered set of files in `supabase/migrations`.
 - Optional Google Drive file IDs, links, and retry diagnostics on `applications`
 - FIFO queue metadata, an oldest-Pending index, and a per-user atomic claim function
 - Private `resumes` Storage bucket
-- Ownership indexes, update triggers, and complete RLS policies
+- Ownership and application-list indexes, update triggers, and complete RLS policies
 
 Generated files use `<auth-user-id>/<application-id>/resume.docx` and are returned only through authenticated download handlers.
 

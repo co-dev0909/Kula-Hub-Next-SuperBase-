@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Download, Users, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -26,6 +26,8 @@ import {
 } from "@/components/ui/dialog";
 import { toast } from "react-toastify";
 import { notifyApplicationQueue } from "@/lib/resume/queue-client";
+
+const APPLICATION_POLL_INTERVAL_MS = 30_000;
 
 function getApplicationFilterDateKey(rawDate?: string | null) {
   if (!rawDate) {
@@ -104,6 +106,9 @@ export default function Applications() {
   const [confirmDelOpen, setConfirmDelOpen] = useState(false);
   const [pendingDelApp, setPendingDelApp] = useState<string>('')
   const [driveUploadingIds, setDriveUploadingIds] = useState<Set<string>>(new Set());
+  const applicationsRequestRef = useRef<Promise<any[]> | null>(null);
+  const activeApplicationActionsRef = useRef(0);
+  const applicationActionsIdleWaitersRef = useRef<Array<() => void>>([]);
 
   // ------------------------
   // State for Filters
@@ -440,44 +445,171 @@ export default function Applications() {
   ];
 
   // ------------------------
+  // API Calls
+  // ------------------------
+  const waitForApplicationActions = useCallback(() => {
+    if (activeApplicationActionsRef.current === 0) {
+      return Promise.resolve();
+    }
+
+    return new Promise<void>((resolve) => {
+      applicationActionsIdleWaitersRef.current.push(resolve);
+    });
+  }, []);
+
+  const getApplications = useCallback(async (showLoading = false): Promise<any[]> => {
+    if (showLoading) {
+      setIsLoading(true);
+    }
+
+    try {
+      while (activeApplicationActionsRef.current > 0) {
+        await waitForApplicationActions();
+      }
+
+      if (applicationsRequestRef.current) {
+        return await applicationsRequestRef.current;
+      }
+
+      const request = (async () => {
+        try {
+          const token = localStorage.getItem("token");
+          const res = await fetch(
+            `${process.env.NEXT_PUBLIC_BACKEND_URL || "/api"}/applications`,
+            {
+              method: "GET",
+              headers: {
+                "Content-Type": "application/json",
+                ...(token && { Authorization: `Bearer ${token}` }),
+              },
+            }
+          );
+
+          const data = await res.json().catch(() => null);
+          if (!res.ok || !data?.success) {
+            throw new Error(data?.message || data?.error || "Applications could not be loaded.");
+          }
+
+          const nextApplications = Array.isArray(data.data) ? data.data : [];
+          setApplications(nextApplications);
+          setLoadError("");
+          return nextApplications;
+        } catch (error) {
+          setLoadError(error instanceof Error ? error.message : "Applications could not be loaded.");
+          return [];
+        }
+      })();
+
+      applicationsRequestRef.current = request;
+
+      try {
+        return await request;
+      } finally {
+        if (applicationsRequestRef.current === request) {
+          applicationsRequestRef.current = null;
+        }
+      }
+    } finally {
+      if (showLoading) {
+        setIsLoading(false);
+      }
+    }
+  }, [waitForApplicationActions]);
+
+  const runApplicationAction = async <Result,>(action: () => Promise<Result>) => {
+    activeApplicationActionsRef.current += 1;
+    const pendingApplicationsRequest = applicationsRequestRef.current;
+
+    try {
+      if (pendingApplicationsRequest) {
+        await pendingApplicationsRequest;
+      }
+
+      return await action();
+    } finally {
+      activeApplicationActionsRef.current = Math.max(
+        0,
+        activeApplicationActionsRef.current - 1
+      );
+
+      if (activeApplicationActionsRef.current === 0) {
+        const waiters = applicationActionsIdleWaitersRef.current.splice(0);
+        waiters.forEach((resolve) => resolve());
+      }
+    }
+  };
+
+  // ------------------------
   // Lifecycle
   // ------------------------
   useEffect(() => {
-    getApplications(true);
-    const interval = setInterval(() => {
-      getApplications(false);
-    }, 5000);
-    return () => clearInterval(interval);
-  }, []);
+    void getApplications(true);
+  }, [getApplications]);
 
-  // ------------------------
-  // API Calls
-  // ------------------------
-  const getApplications = async (showLoading = false) => {
-    if (showLoading) setIsLoading(true);
-    try {
-      const token = localStorage.getItem("token");
-      const res = await fetch(
-        `${process.env.NEXT_PUBLIC_BACKEND_URL || "/api"}/applications`,
-        {
-          method: "GET",
-          headers: {
-            "Content-Type": "application/json",
-            ...(token && { Authorization: `Bearer ${token}` }),
-          },
-        }
-      );
+  const hasActiveApplicationWork = applications.some((application) =>
+    application.status === "Pending"
+    || application.status === "Generating"
+    || application.driveUploadInProgress
+  );
 
-      const data = await res.json().catch(() => null);
-      if (!res.ok || !data?.success) throw new Error(data?.message || data?.error || "Applications could not be loaded.");
-      setApplications(Array.isArray(data.data) ? data.data : []);
-      setLoadError("");
-    } catch (error) {
-      setLoadError(error instanceof Error ? error.message : "Applications could not be loaded.");
-    } finally {
-      if (showLoading) setIsLoading(false);
+  useEffect(() => {
+    if (!hasActiveApplicationWork) {
+      return;
     }
-  };
+
+    let cancelled = false;
+    let pollTimer: ReturnType<typeof setTimeout> | undefined;
+
+    const clearPollTimer = () => {
+      if (pollTimer !== undefined) {
+        clearTimeout(pollTimer);
+        pollTimer = undefined;
+      }
+    };
+
+    const schedulePoll = () => {
+      clearPollTimer();
+      if (cancelled || document.visibilityState !== "visible") {
+        return;
+      }
+
+      pollTimer = setTimeout(async () => {
+        pollTimer = undefined;
+        if (cancelled || document.visibilityState !== "visible") {
+          return;
+        }
+
+        if (activeApplicationActionsRef.current > 0) {
+          schedulePoll();
+          return;
+        }
+
+        await getApplications(false);
+        schedulePoll();
+      }, APPLICATION_POLL_INTERVAL_MS);
+    };
+
+    const handleVisibilityChange = () => {
+      clearPollTimer();
+      if (document.visibilityState === "visible") {
+        if (activeApplicationActionsRef.current > 0) {
+          schedulePoll();
+          return;
+        }
+
+        void getApplications(false).finally(schedulePoll);
+      }
+    };
+
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+    schedulePoll();
+
+    return () => {
+      cancelled = true;
+      clearPollTimer();
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
+    };
+  }, [getApplications, hasActiveApplicationWork]);
 
   const handleRestore = async (appId: string) => {
     try {
@@ -493,25 +625,27 @@ export default function Applications() {
       application._id === appId ? { ...application, status: "Pending", generationError: null } : application
     ));
     try {
-      const token = localStorage.getItem("token");
-      const res = await fetch(
-        `${process.env.NEXT_PUBLIC_BACKEND_URL || "/api"}/applications/${appId}/generate`,
-        {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            ...(token && { Authorization: `Bearer ${token}` }),
-          },
+      await runApplicationAction(async () => {
+        const token = localStorage.getItem("token");
+        const res = await fetch(
+          `${process.env.NEXT_PUBLIC_BACKEND_URL || "/api"}/applications/${appId}/generate`,
+          {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              ...(token && { Authorization: `Bearer ${token}` }),
+            },
+          }
+        );
+
+        const data = await res.json();
+        if (!res.ok || !data.success) {
+          throw new Error(data.error || data.message || "Failed to generate resume.");
         }
-      );
 
-      const data = await res.json();
-      if (!res.ok || !data.success) {
-        throw new Error(data.error || data.message || "Failed to generate resume.");
-      }
-
-      toast.info(data.message || "Resume generation added to the queue.");
-      notifyApplicationQueue();
+        toast.info(data.message || "Resume generation added to the queue.");
+        notifyApplicationQueue();
+      });
     } catch (error: any) {
       toast.error(error.message || "Generate failed.");
     } finally {
@@ -521,34 +655,36 @@ export default function Applications() {
 
   const handleDownload = async (appId: string) => {
     try {
-      const token = localStorage.getItem("token");
-      const response = await fetch(
-        `${process.env.NEXT_PUBLIC_BACKEND_URL || "/api"}/applications/${appId}/download`,
-        {
-          method: "GET",
-          headers: {
-            ...(token && { Authorization: `Bearer ${token}` }),
-          },
+      await runApplicationAction(async () => {
+        const token = localStorage.getItem("token");
+        const response = await fetch(
+          `${process.env.NEXT_PUBLIC_BACKEND_URL || "/api"}/applications/${appId}/download`,
+          {
+            method: "GET",
+            headers: {
+              ...(token && { Authorization: `Bearer ${token}` }),
+            },
+          }
+        );
+
+        if (!response.ok) {
+          throw new Error("Failed to download generated resume.");
         }
-      );
 
-      if (!response.ok) {
-        throw new Error("Failed to download generated resume.");
-      }
+        const blob = await response.blob();
+        const blobUrl = URL.createObjectURL(blob);
+        const link = document.createElement("a");
+        const contentDisposition = response.headers.get("Content-Disposition");
+        const responseFilename = contentDisposition?.match(/filename="([^"]+)"/i)?.[1];
+        link.href = blobUrl;
+        link.download = responseFilename || "resume.docx";
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        setTimeout(() => URL.revokeObjectURL(blobUrl), 2000);
 
-      const blob = await response.blob();
-      const blobUrl = URL.createObjectURL(blob);
-      const link = document.createElement("a");
-      const contentDisposition = response.headers.get("Content-Disposition");
-      const responseFilename = contentDisposition?.match(/filename="([^"]+)"/i)?.[1];
-      link.href = blobUrl;
-      link.download = responseFilename || "resume.docx";
-      document.body.appendChild(link);
-      link.click();
-      document.body.removeChild(link);
-      setTimeout(() => URL.revokeObjectURL(blobUrl), 2000);
-
-      toast.success("Resume downloaded.");
+        toast.success("Resume downloaded.");
+      });
       await getApplications();
     } catch (error: any) {
       toast.error(error.message || "Download failed.");
@@ -558,29 +694,30 @@ export default function Applications() {
   const handleDriveUpload = async (appId: string) => {
     setDriveUploadingIds((current) => new Set(current).add(appId));
     try {
-      const token = localStorage.getItem("token");
-      const response = await fetch(
-        `${process.env.NEXT_PUBLIC_BACKEND_URL || "/api"}/applications/${appId}/drive`,
-        {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            ...(token && { Authorization: `Bearer ${token}` }),
-          },
+      await runApplicationAction(async () => {
+        const token = localStorage.getItem("token");
+        const response = await fetch(
+          `${process.env.NEXT_PUBLIC_BACKEND_URL || "/api"}/applications/${appId}/drive`,
+          {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              ...(token && { Authorization: `Bearer ${token}` }),
+            },
+          }
+        );
+        const data = await response.json().catch(() => null);
+        if (!response.ok || !data?.success) {
+          throw new Error(data?.error || data?.message || "Google Drive upload failed.");
         }
-      );
-      const data = await response.json().catch(() => null);
-      if (!response.ok || !data?.success) {
-        throw new Error(data?.error || data?.message || "Google Drive upload failed.");
-      }
 
-      toast.info(data.message || "Google Drive upload added to the queue.");
-      notifyApplicationQueue();
-      await getApplications(false);
+        toast.info(data.message || "Google Drive upload added to the queue.");
+        notifyApplicationQueue();
+      });
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Google Drive upload failed.");
-      await getApplications(false);
     } finally {
+      await getApplications(false);
       setDriveUploadingIds((current) => {
         const next = new Set(current);
         next.delete(appId);
@@ -660,20 +797,24 @@ export default function Applications() {
   const confirmDelete = async () => {
     if (pendingDelApp === '') return;
     try {
-      const token = localStorage.getItem("token");
-      const res = await fetch(
-        `${process.env.NEXT_PUBLIC_BACKEND_URL || "/api"}/applications/${pendingDelApp}`,
-        {
-          method: "DELETE",
-          headers: {
-            "Content-Type": "application/json",
-            ...(token && { Authorization: `Bearer ${token}` }),
-          },
-        }
-      );
+      const deleted = await runApplicationAction(async () => {
+        const token = localStorage.getItem("token");
+        const res = await fetch(
+          `${process.env.NEXT_PUBLIC_BACKEND_URL || "/api"}/applications/${pendingDelApp}`,
+          {
+            method: "DELETE",
+            headers: {
+              "Content-Type": "application/json",
+              ...(token && { Authorization: `Bearer ${token}` }),
+            },
+          }
+        );
 
-      if (res.ok) {
-        getApplications(); // refresh
+        return res.ok;
+      });
+
+      if (deleted) {
+        await getApplications();
       }
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Application could not be deleted.");
@@ -688,18 +829,21 @@ export default function Applications() {
     if (!pendingApp || confirmingDecision) return;
     setConfirmingDecision("apply");
     try {
-      const token = localStorage.getItem("token");
-      const res = await fetch(
-        `${process.env.NEXT_PUBLIC_BACKEND_URL || "/api"}/applications/${pendingApp.id}/applied`,
-        {
-          method: "PATCH",
-          headers: {
-            "Content-Type": "application/json",
-            ...(token && { Authorization: `Bearer ${token}` }),
-          },
-        }
-      );
-      const data = await res.json().catch(() => null);
+      const { res, data } = await runApplicationAction(async () => {
+        const token = localStorage.getItem("token");
+        const res = await fetch(
+          `${process.env.NEXT_PUBLIC_BACKEND_URL || "/api"}/applications/${pendingApp.id}/applied`,
+          {
+            method: "PATCH",
+            headers: {
+              "Content-Type": "application/json",
+              ...(token && { Authorization: `Bearer ${token}` }),
+            },
+          }
+        );
+        const data = await res.json().catch(() => null);
+        return { res, data };
+      });
 
       if (res.ok) {
         if (data?.data) {
@@ -724,18 +868,21 @@ export default function Applications() {
     if (!pendingApp || confirmingDecision) return;
     setConfirmingDecision("expired");
     try {
-      const token = localStorage.getItem("token");
-      const res = await fetch(
-        `${process.env.NEXT_PUBLIC_BACKEND_URL || "/api"}/applications/${pendingApp.id}/expired`,
-        {
-          method: "PATCH",
-          headers: {
-            "Content-Type": "application/json",
-            ...(token && { Authorization: `Bearer ${token}` }),
-          },
-        }
-      );
-      const data = await res.json().catch(() => null);
+      const { res, data } = await runApplicationAction(async () => {
+        const token = localStorage.getItem("token");
+        const res = await fetch(
+          `${process.env.NEXT_PUBLIC_BACKEND_URL || "/api"}/applications/${pendingApp.id}/expired`,
+          {
+            method: "PATCH",
+            headers: {
+              "Content-Type": "application/json",
+              ...(token && { Authorization: `Bearer ${token}` }),
+            },
+          }
+        );
+        const data = await res.json().catch(() => null);
+        return { res, data };
+      });
 
       if (res.ok) {
         if (data?.data) {
@@ -759,20 +906,24 @@ export default function Applications() {
   const confirmRestore = async () => {
     if (!restoreAppId) return;
     try {
-      const token = localStorage.getItem("token");
-      const res = await fetch(
-        `${process.env.NEXT_PUBLIC_BACKEND_URL || "/api"}/applications/${restoreAppId}/restored`,
-        {
-          method: "PATCH",
-          headers: {
-            "Content-Type": "application/json",
-            ...(token && { Authorization: `Bearer ${token}` }),
-          },
-        }
-      );
+      const restored = await runApplicationAction(async () => {
+        const token = localStorage.getItem("token");
+        const res = await fetch(
+          `${process.env.NEXT_PUBLIC_BACKEND_URL || "/api"}/applications/${restoreAppId}/restored`,
+          {
+            method: "PATCH",
+            headers: {
+              "Content-Type": "application/json",
+              ...(token && { Authorization: `Bearer ${token}` }),
+            },
+          }
+        );
 
-      if (res.ok) {
-        getApplications(); // refresh
+        return res.ok;
+      });
+
+      if (restored) {
+        await getApplications();
       }
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Restore failed.");
